@@ -1,61 +1,69 @@
-name: Build and Push Multi-Arch Docker Image
+name: Build and push Docker image
 
-# 触发条件：推送 v* 标签时（如 git tag v1.1.0 && git push --tags）
+# 推送到 master、推送 v* 标签或手动运行时构建镜像
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
 
 # 权限：允许 Actions 推送到 GHCR
 permissions:
   contents: read
   packages: write
+concurrency:
+  group: publish-image
+  cancel-in-progress: false
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest  # AMD64 主机，用于交叉构建 ARM
+    runs-on: ubuntu-24.04
     steps:
       # 检出代码
       - name: Checkout
-        uses: actions/checkout@v4
-
-      # 设置 Docker Buildx（启用多架构）
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 登录 GHCR（使用 GitHub Token）
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       # 设置 QEMU（用于 ARM 交叉构建）
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
-      # 从标签提取版本（匹配 v1.0.0 格式）
-      - name: Extract version from tag
+      # 设置 Docker Buildx（启用多架构）
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      # 登录 GHCR（使用 GitHub Token）
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # 分支推送使用提交摘要，版本标签保留标签名
+      - name: Set image tag
         id: version
         run: |
-          VERSION="${{ github.ref_name }}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="sha-${GITHUB_SHA::12}"
+          fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       # 构建并推送多架构镜像
       - name: Build and push multi-arch image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
-          file: ./Dockerfile  # 你的 Dockerfile 路径
-          push: true  # 直接推送
-          platforms: linux/amd64,linux/arm64  # 目标架构
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/wechat-article/wechat-article-exporter:${{ steps.version.outputs.version }}-amd64
-            ghcr.io/wechat-article/wechat-article-exporter:${{ steps.version.outputs.version }}-arm64
-            ghcr.io/wechat-article/wechat-article-exporter:${{ steps.version.outputs.version }}
-            ghcr.io/wechat-article/wechat-article-exporter:latest
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository }}:latest
           build-args: |
-            VERSION=${{ steps.version.outputs.version }}  # 传递到 Dockerfile 的 ARG
-          cache-from: type=gha  # 使用 GitHub Actions 缓存加速
+            VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
