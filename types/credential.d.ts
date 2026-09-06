@@ -1,5 +1,10 @@
 import type { MpAccount } from '../store/v2/info';
 
+export interface CredentialCertificateStatus {
+  state: 'trusted' | 'untrusted' | 'missing' | 'error' | 'unsupported';
+  message: string;
+}
+
 export interface ParsedCredential {
   nickname?: string;
   avatar?: string;

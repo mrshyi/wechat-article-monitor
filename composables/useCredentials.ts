@@ -12,7 +12,7 @@ import dayjs from 'dayjs';
 import { getArticleList } from '~/apis';
 import { CREDENTIAL_LIVE_MINUTES } from '~/config';
 import { getAllInfo, type MpAccount } from '~/store/v2/info';
-import type { ParsedCredential } from '~/types/credential';
+import type { CredentialCertificateStatus, ParsedCredential } from '~/types/credential';
 import { createAsyncMutex, createCoalescedSerialRunner, runCredentialInitialSyncAttempt } from '~/utils/account-sync';
 import {
   buildCredentialAccounts,
@@ -29,6 +29,7 @@ export interface CredentialServiceStatus {
   credentialCount?: number;
   systemProxy?: {
     supported: boolean;
+    certificate: CredentialCertificateStatus;
     managed: boolean;
     consent: boolean;
     networkService: string | null;

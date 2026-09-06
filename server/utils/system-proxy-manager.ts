@@ -5,6 +5,12 @@ import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { createError, getRequestHeader, getRequestURL, type H3Event } from 'h3';
+import type { CredentialCertificateStatus } from '../../types/credential.d.ts';
+import {
+  assertCredentialCertificateTrusted,
+  CredentialCertificateError,
+  checkCredentialCertificate,
+} from './credential-certificate';
 
 const execFileAsync = promisify(execFile);
 const NETWORK_SETUP = '/usr/sbin/networksetup';
@@ -42,6 +48,7 @@ interface StoredProxyState {
 
 export interface SystemProxyStatus {
   supported: boolean;
+  certificate: CredentialCertificateStatus;
   managed: boolean;
   consent: boolean;
   networkService: string | null;
@@ -164,9 +171,17 @@ export function getSafeProxyUrl(value: string | null): string | null {
   }
 }
 
+function parseProxyUrl(value: string): URL {
+  try {
+    return new URL(value);
+  } catch {
+    throw new Error('代理 URL 格式无效，请检查系统代理或 CREDENTIAL_UPSTREAM_PROXY 配置');
+  }
+}
+
 function normalizeProxyUrl(value: string | null): string | null {
   if (!value) return null;
-  const url = new URL(value);
+  const url = parseProxyUrl(value);
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error(`不支持的上游代理协议：${url.protocol}`);
   if (url.username || url.password) throw new Error('上游代理 URL 不允许包含认证信息');
   return url.toString().replace(/\/$/, '');
@@ -174,7 +189,7 @@ function normalizeProxyUrl(value: string | null): string | null {
 
 function isCredentialMitmEndpoint(value: string | null) {
   if (!value) return false;
-  const url = new URL(value);
+  const url = parseProxyUrl(value);
   const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
   const loopback = hostname === 'localhost' || hostname === '::1' || /^127\./.test(hostname);
@@ -204,7 +219,7 @@ function resolveUpstream(snapshot: SystemProxySnapshot): string | null {
 }
 
 async function checkPort(url: string, label: string) {
-  const parsed = new URL(url);
+  const parsed = parseProxyUrl(url);
   const port = Number(parsed.port || (parsed.protocol === 'https:' ? 443 : 80));
   await new Promise<void>((resolvePromise, reject) => {
     const socket = createConnection({ host: parsed.hostname, port });
@@ -286,6 +301,8 @@ export async function detectCredentialUpstream(): Promise<string | null> {
 export async function enableSystemProxy(options: { rememberConsent?: boolean } = {}) {
   await serialize(async () => {
     if (process.platform !== 'darwin') throw new Error('系统代理自动托管目前仅支持 macOS');
+    // 手动与自动启用共用此入口；检查失败时不写授权状态，也不修改任何系统代理。
+    assertCredentialCertificateTrusted(await checkCredentialCertificate());
     const currentState = await readState();
     if (currentState.managed) return;
 
@@ -359,16 +376,19 @@ export async function autoEnableSystemProxy() {
   try {
     await enableSystemProxy();
   } catch (error: any) {
-    lastError = error?.message || String(error);
+    // 证书错误通过实时 certificate 状态展示，避免手动信任后残留旧错误。
+    lastError = error instanceof CredentialCertificateError ? null : error?.message || String(error);
   }
 }
 
 export async function getSystemProxyStatus(
   options: { includeConfirmationToken?: boolean } = {}
 ): Promise<SystemProxyStatus> {
+  const certificate = await checkCredentialCertificate();
   if (process.platform !== 'darwin') {
     return {
       supported: false,
+      certificate,
       managed: false,
       consent: false,
       networkService: null,
@@ -394,6 +414,7 @@ export async function getSystemProxyStatus(
 
   return {
     supported: true,
+    certificate,
     managed: state.managed,
     consent: state.consent,
     networkService,

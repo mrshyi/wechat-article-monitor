@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { access, mkdir, readFile, watch, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
+import { CREDENTIAL_MITM_CONFDIR } from '~/server/utils/credential-certificate';
 import {
   autoEnableSystemProxy,
   detectCredentialUpstream,
@@ -167,7 +168,14 @@ async function startMitmProxy() {
   if (runtime.upstreamProxy) {
     args.push('--mode', `upstream:${runtime.upstreamProxy}`);
   }
-  args.push('--set', `credentials=${CREDENTIALS_JSON}`, '--set', 'connection_strategy=lazy');
+  args.push(
+    '--set',
+    `confdir=${CREDENTIAL_MITM_CONFDIR}`,
+    '--set',
+    `credentials=${CREDENTIALS_JSON}`,
+    '--set',
+    'connection_strategy=lazy'
+  );
 
   console.log(`[credential-service] starting mitmdump on port ${MITM_PORT}...`);
   runtime.mitmRunning = false;

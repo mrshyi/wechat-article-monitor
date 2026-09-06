@@ -29,10 +29,17 @@ export default function useCredentialGate() {
     return validCredentials.value.length > 0;
   });
 
+  const certificateBlocked = computed(
+    () =>
+      Boolean(serviceStatus.value.systemProxy?.supported) &&
+      serviceStatus.value.systemProxy?.certificate?.state !== 'trusted'
+  );
+
   const state = computed<CredentialGateState>(() => {
     if (configuring.value) return 'configuring';
     if (!statusReady.value) return 'checking';
-    if (statusError.value || actionError.value || !serviceStatus.value.running) return 'error';
+    if (statusError.value || actionError.value || !serviceStatus.value.running || certificateBlocked.value)
+      return 'error';
     if (targetCredentialReady.value && !open.value) return 'ready';
     if (!serviceStatus.value.systemProxy?.managed) return 'needsConsent';
     return 'waitingCredential';
@@ -65,7 +72,16 @@ export default function useCredentialGate() {
     });
   }
 
+  async function recheckEnvironment() {
+    actionError.value = null;
+    await refreshServiceStatus();
+  }
+
   async function enableProxy() {
+    if (certificateBlocked.value) {
+      actionError.value = serviceStatus.value.systemProxy?.certificate?.message || '请先完成本机 CA 信任检测';
+      return;
+    }
     const token = serviceStatus.value.systemProxy?.confirmationToken;
     if (!token) {
       actionError.value = '未获取到系统代理确认令牌，请刷新状态后重试';
@@ -84,7 +100,8 @@ export default function useCredentialGate() {
       });
       await refreshServiceStatus();
     } catch (error: any) {
-      actionError.value = error?.data?.statusMessage || error?.message || '系统代理配置失败';
+      actionError.value =
+        error?.data?.data?.message || error?.data?.statusMessage || error?.message || '系统代理配置失败';
       await refreshServiceStatus();
     } finally {
       configuring.value = false;
@@ -171,6 +188,7 @@ export default function useCredentialGate() {
     reason,
     state,
     configuring,
+    certificateBlocked,
     actionError,
     serviceStatus,
     statusReady,
@@ -183,6 +201,6 @@ export default function useCredentialGate() {
     closeGate,
     enableProxy,
     restoreProxy,
-    refreshServiceStatus,
+    refreshServiceStatus: recheckEnvironment,
   };
 }
