@@ -7,6 +7,7 @@ const {
   reason,
   state,
   configuring,
+  certificateBlocked,
   actionError,
   serviceStatus,
   statusError,
@@ -40,6 +41,21 @@ const upstreamLabel = computed(
   () => serviceStatus.value.systemProxy?.upstreamProxy || serviceStatus.value.upstreamProxy || '未检测到'
 );
 
+const certificate = computed(() => serviceStatus.value.systemProxy?.certificate);
+const certificateLabel = computed(() => {
+  const labels = {
+    trusted: '已信任',
+    untrusted: '未信任',
+    missing: '未生成',
+    error: '检测失败',
+    unsupported: '需手动确认',
+  };
+  return certificate.value ? labels[certificate.value.state] : '等待检测';
+});
+const installCertificateCommand =
+  'sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$HOME/.mitmproxy/mitmproxy-ca-cert.pem"';
+const verifyCertificateCommand = 'security verify-cert -c "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" -p basic';
+
 const modalDescription = computed(() =>
   targetBiz.value
     ? `当前操作需要公众号 ${targetBiz.value} 的有效 Credential。`
@@ -69,7 +85,9 @@ const modalDescription = computed(() =>
           <div class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-3">
             <p class="text-xs text-slate-400">仅解密微信文章</p>
             <p class="mt-1 truncate font-mono font-medium">
-              {{ serviceStatus.systemProxy?.mitmProxy || serviceStatus.proxyAddress || `127.0.0.1:${serviceStatus.port}` }}
+              {{
+                serviceStatus.systemProxy?.mitmProxy || serviceStatus.proxyAddress || `127.0.0.1:${serviceStatus.port}`
+              }}
             </p>
           </div>
           <UIcon name="i-lucide:arrow-right" class="text-slate-300" />
@@ -79,7 +97,9 @@ const modalDescription = computed(() =>
           </div>
         </div>
 
-        <div class="divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+        <div
+          class="divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700"
+        >
           <div class="flex items-center justify-between px-4 py-3">
             <span class="text-sm text-slate-600 dark:text-slate-300">mitmproxy 抓包服务</span>
             <span class="flex items-center gap-2 text-xs font-medium">
@@ -88,6 +108,12 @@ const modalDescription = computed(() =>
                 :class="serviceStatus.running ? 'bg-emerald-500' : 'bg-rose-400'"
               ></span>
               {{ serviceStatus.running ? '已启动' : '未启动' }}
+            </span>
+          </div>
+          <div class="flex items-center justify-between px-4 py-3">
+            <span class="text-sm text-slate-600 dark:text-slate-300">本机 CA 证书信任</span>
+            <span class="text-xs font-medium" :class="certificateBlocked ? 'text-amber-600' : 'text-slate-500'">
+              {{ certificateLabel }}
             </span>
           </div>
           <div class="flex items-center justify-between px-4 py-3">
@@ -115,6 +141,31 @@ const modalDescription = computed(() =>
         >
           <UIcon name="i-lucide:circle-alert" class="mt-0.5 size-4 shrink-0" />
           <span>{{ actionError || statusError || serviceStatus.systemProxy?.error || reason }}</span>
+        </div>
+
+        <div
+          v-if="certificateBlocked"
+          class="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <p>{{ certificate?.message || '等待本机 CA 检测通过后才能启用代理。' }}</p>
+          <template v-if="certificate?.state === 'untrusted'">
+            <p>若同意信任本机抓包 CA，请用运行项目的同一 macOS 用户，在终端执行以下单行命令：</p>
+            <pre
+              class="overflow-x-auto rounded bg-black/5 p-3 text-xs"
+            ><code>{{ installCertificateCommand }}</code></pre>
+            <p>需要管理员密码。这是系统级根证书信任，允许持有对应私钥的代理解密 HTTPS；项目不会自动执行 sudo。</p>
+            <p>只信任自己控制的 CA，不要复制其他电脑的 CA，也不要分享包含私钥的 mitmproxy-ca.pem。</p>
+          </template>
+          <template v-if="certificate?.state === 'untrusted' || certificate?.state === 'error'">
+            <p>手动验证命令：</p>
+            <pre
+              class="overflow-x-auto rounded bg-black/5 p-3 text-xs"
+            ><code>{{ verifyCertificateCommand }}</code></pre>
+            <p>验证成功后，⌘Q 完全退出微信和 Chrome 再打开，点击「重新检测」，最后确认开启抓取。</p>
+          </template>
+          <p v-if="serviceStatus.systemProxy?.managed">
+            代理已处于托管状态；若文章加载异常，请先停止抓取或退出项目以恢复代理。
+          </p>
         </div>
 
         <ol class="grid gap-4 sm:grid-cols-3">
@@ -160,6 +211,7 @@ const modalDescription = computed(() =>
               color="black"
               icon="i-lucide:shield-check"
               :loading="configuring"
+              :disabled="certificateBlocked"
               class="active:scale-[0.98]"
               @click="enableProxy"
             >
